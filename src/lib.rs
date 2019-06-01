@@ -43,6 +43,49 @@ impl<K: Hash+Eq+Clone, V>  HashCache<K, V> {
     pub fn new() -> HashCache<K,V> {
         HashCache{ store: HashMap::new(), expiring: Vec::new()}
     }
+
+    fn expired(&self, key: &K) -> bool {
+        match self.store.get(key) {
+            Some(v) => {
+                match &v.expires {
+                    ExpireMeta::Expires(e) => {
+                        println!("{:?}, {:?}, {:?}", e.inserted, e.ttl,  e.inserted.elapsed().gt(&e.ttl));
+                        e.inserted.elapsed().gt(&e.ttl)
+                    }
+                    _ => { false }
+                }
+            },
+            // report empty entries as expired
+            None => { true },
+        }
+    }
+
+    // called by vacuum, this just handles sampling and removing a single set (not retrying based
+    // on a threshold)
+    fn vacuum_sample(&mut self, count : usize) -> usize {
+        // amount is the max number of items we sample from the current set
+        let mut amount = count;
+        if count > self.expiring.len() {
+            amount = self.expiring.len()
+        }
+
+        // sample a random set of indices that have expiration set
+        let samples = rand::seq::index::sample(&mut rand::thread_rng(), self.expiring.len(), amount);
+
+        let mut expired_indices = vec![];
+
+        // if the key referenced by the index is expired, remove it from the cache (and self.expiring)
+        for index in samples.iter() {
+            if let Some(key) = self.expiring.get(index) {
+                if self.expired(&key) {
+                    self.store.remove(key);
+                    expired_indices.push(index);
+                }
+            }
+        }
+
+        return expired_indices.iter().map(|i| self.expiring.remove(*i)).count();
+    }
 }
 
 impl<K: Hash+Eq+Clone, V>  Cache<K,V> for HashCache<K, V>  {
@@ -58,18 +101,7 @@ impl<K: Hash+Eq+Clone, V>  Cache<K,V> for HashCache<K, V>  {
     }
 
     fn get(&mut self, key: K) -> Option<&V> {
-        let expired = match self.store.get(&key) {
-            Some(v) => {
-                match &v.expires {
-                    ExpireMeta::Expires(e) => {
-                        e.inserted.elapsed().gt(&e.ttl)
-                    }
-                    _ => {false}
-                }
-            },
-            None => { return None },
-        };
-        if expired {
+        if self.expired(&key) {
             self.store.remove(&key);
             return None
         }
@@ -88,47 +120,11 @@ impl<K: Hash+Eq+Clone, V>  Cache<K,V> for HashCache<K, V>  {
         assert!(retry_threshold > 0.0);
         assert!(retry_threshold < 1.0);
 
-        // amount is the max number of items we sample from the current set
-        let mut amount = count;
-        if count > self.expiring.len() {
-            amount = self.expiring.len()
-        }
-
         // initialize to amount so that we always iterate at least once
-        let mut expired_count = amount as f32;
+        let mut expired_count = count as f32;
 
-        while expired_count/(amount as f32) > retry_threshold {
-            println!("{:?}, {:?}, {:?}", expired_count, amount as f32, retry_threshold);
-            expired_count = 0.0;
-            if amount > self.expiring.len() {
-                amount = self.expiring.len()
-            }
-
-            // sample a random set of indices that have expiration set
-            let samples = rand::seq::index::sample(&mut rand::thread_rng(), self.expiring.len(), amount);
-
-            // if the key referenced by the index is expired, remove it from the cache (and self.expiring)
-            for index in samples.iter() {
-                if let Some(key) = self.expiring.get(index) {
-                    let expired = match self.store.get(key) {
-                        Some(v) => {
-                            match &v.expires {
-                                ExpireMeta::Expires(e) => {
-                                    e.inserted.elapsed().gt(&e.ttl)
-                                }
-                                _ => { false }
-                            }
-                        },
-                        // if the entry is already gone, mark expired so that the entry in self.expiring is cleared
-                        None => { true },
-                    };
-                    if expired {
-                        self.store.remove(key);
-                        self.expiring.remove(index);
-                        expired_count += 1.0;
-                    }
-                }
-            }
+        while expired_count/(count as f32) > retry_threshold {
+            expired_count = self.vacuum_sample(count) as f32;
         }
     }
 }
@@ -259,17 +255,17 @@ mod tests {
         cache.insert_ttl("id4".to_string(), "secret2".to_string(), Duration::new(2, 0));
         assert_eq!(cache.expiring.len(), 4);
 
+
+
         // wait for 2 keys to expire
-        sleep(Duration::new(1, 0));
+        sleep(Duration::new(1, 1000));
 
-        // count is 1 and retry threshold is 0.60, so one iteration of vacuuming should leave
-        // one remaining entry to clean (0.60 < 0.50)
-        cache.vacuum(2, 0.60);
+        // count is 4 and retry threshold is 0.60, so one iteration of vacuuming should leave
+        // two entries remaining
+        cache.vacuum(4, 0.60);
 
-        // check that at least one key was vacuumed
-        assert!(cache.expiring.len() < 4);
-        // check that no more than two keys were vacuumed
-        assert!(cache.expiring.len() >= 2);
+        // check that two keys were vacuumed
+        assert_eq!(2, cache.expiring.len());
 
     }
 }
