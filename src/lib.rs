@@ -252,28 +252,28 @@ mod tests {
 
     #[test]
     fn store_retrieve() {
-        let mut cache : HashCache<String,String> = HashCache::new();
-        cache.insert("id".to_string(), "secret".to_string());
+        let mut cache : HashCache<&str,&str> = HashCache::new();
+        cache.insert("id", "secret");
         assert_eq!(true,
-                   cache.get("id".to_string(), |v| assert_eq!(*v, "secret".to_string())));
+                   cache.get("id", |v| assert_eq!(*v, "secret")));
         assert_eq!(false,
-                   cache.get("nope".to_string(), |_| panic!("expected none")));
+                   cache.get("nope", |_| panic!("expected none")));
     }
 
     #[test]
     fn expire_key() {
-        let mut cache : HashCache<String,String> = HashCache::new();
-        cache.insert_ttl("id".to_string(), "secret".to_string(), Duration::new(1, 0));
+        let mut cache : HashCache<&str,&str> = HashCache::new();
+        cache.insert_ttl("id", "secret", Duration::new(1, 0));
         assert_eq!(cache.expiring.len(), 1);
 
         // initial get should work
         assert_eq!(true,
-                   cache.get("id".to_string(), |v| assert_eq!(*v, "secret".to_string())));
+                   cache.get("id", |v| assert_eq!(*v, "secret")));
 
         sleep(Duration::new(1, 0));
 
         // fetch after ttl should be none
-        assert_eq!(false, cache.get("id".to_string(), |_| panic!("expected none")));
+        assert_eq!(false, cache.get("id", |_| panic!("expected none")));
 
         // even though the cache reports the key is gone, it's still tracked in the expiring list
         // until a vacuum is performed
@@ -283,13 +283,13 @@ mod tests {
 
     #[test]
     fn vacuum() {
-        let mut cache : HashCache<String,String> = HashCache::new();
-        cache.insert_ttl("id".to_string(), "secret".to_string(), Duration::new(1, 0));
+        let mut cache : HashCache<&str,&str> = HashCache::new();
+        cache.insert_ttl("id", "secret", Duration::new(1, 0));
         assert_eq!(cache.expiring.len(), 1);
 
         // initial get should work
         assert_eq!(true,
-                   cache.get("id".to_string(), |v| assert_eq!(*v, "secret".to_string())));
+                   cache.get("id", |v| assert_eq!(*v, "secret")));
         cache.vacuum(10, 0.25);
 
         sleep(Duration::new(1, 0));
@@ -308,9 +308,9 @@ mod tests {
 
     #[test]
     fn vacuum_sampling_retry() {
-        let mut cache : HashCache<String,String> = HashCache::new();
-        cache.insert_ttl("id".to_string(), "secret".to_string(), Duration::new(1, 0));
-        cache.insert_ttl("id2".to_string(), "secret2".to_string(), Duration::new(1, 0));
+        let mut cache : HashCache<&str,&str> = HashCache::new();
+        cache.insert_ttl("id", "secret", Duration::new(1, 0));
+        cache.insert_ttl("id2", "secret2", Duration::new(1, 0));
         assert_eq!(cache.expiring.len(), 2);
 
         // wait for keys to expire
@@ -332,11 +332,11 @@ mod tests {
 
     #[test]
     fn vacuum_sampling_no_retry() {
-        let mut cache : HashCache<String,String> = HashCache::new();
-        cache.insert_ttl("id".to_string(), "secret".to_string(), Duration::new(1, 0));
-        cache.insert_ttl("id2".to_string(), "secret2".to_string(), Duration::new(1, 0));
-        cache.insert_ttl("id3".to_string(), "secret".to_string(), Duration::new(2, 0));
-        cache.insert_ttl("id4".to_string(), "secret2".to_string(), Duration::new(2, 0));
+        let mut cache : HashCache<&str,&str> = HashCache::new();
+        cache.insert_ttl("id", "secret", Duration::new(1, 0));
+        cache.insert_ttl("id2", "secret2", Duration::new(1, 0));
+        cache.insert_ttl("id3", "secret", Duration::new(2, 0));
+        cache.insert_ttl("id4", "secret2", Duration::new(2, 0));
         assert_eq!(cache.expiring.len(), 4);
 
         // wait for 2 keys to expire
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn threadsafe_cache_e2e() {
-        let cache : Arc<RwLock<ThreadSafeHashCache<String,String>>> = Arc::new(RwLock::new(ThreadSafeHashCache::new()));
+        let cache : Arc<RwLock<ThreadSafeHashCache<&str,&str>>> = Arc::new(RwLock::new(ThreadSafeHashCache::new()));
         let vacuum_cache = cache.clone();
 
         // start a vacuum thread
@@ -369,7 +369,7 @@ mod tests {
         // insert a value
         {
             let mut outer = c.write().expect("poisoned lock");
-            outer.insert_ttl("id".to_string(), "secret".to_string(), Duration::new(1, 0));
+            outer.insert_ttl("id", "secret", Duration::new(1, 0));
         }
 
         sleep(Duration::new(2,0));
